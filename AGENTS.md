@@ -224,10 +224,22 @@ Then query OSV.dev for every `group:artifact:version`. **Validate the scanner ag
 a known-bad package such as `log4j-core:2.14.1` before trusting a clean result** —
 a silently broken query looks exactly like a clean bill of health.
 
-The AGP 9 upgrade took the build classpath from 61 vulnerable modules to 12, all deep
-inside AGP's own legacy internals (`gson:2.8.0`, `guava:18.0`, `httpclient:4.5.6`).
-Those are not fixable without forking AGP and are reasonable to dismiss in Dependabot
-as development dependencies.
+The AGP 9 upgrade took the build classpath from 61 vulnerable modules to 1. The rest
+(BouncyCastle, commons-lang3, httpclient, jose4j, jdom2) are fixed by pinning the
+patched versions on the root project's `buildscript` classpath in
+`build.gradle.kts` — Gradle's highest-version-wins conflict resolution lifts them.
+`buildEnvironment` prints `declared -> resolved`, so it is ambiguous about which
+version won; resolve it properly with an init script that reads
+`buildscript.configurations.*.incoming.resolutionResult`.
+
+That `buildscript` block is build-tool only and does **not** leak into the app —
+re-verify with a runtime classpath scan after touching it.
+
+One alert remains: `kotlin-gradle-plugin` requires KGP 2.4.20-Beta1. That is a beta,
+and moving KGP means KSP must move in lockstep or it fails with "unexpected jvm
+signature V". Do not chase it. It is also about the Kotlin **build cache**, which this
+project does not enable — `org.gradle.caching=true` is Gradle's own cache, a different
+mechanism. Revisit when a stable KGP 2.4.20+ ships.
 
 ### S3 keys
 
