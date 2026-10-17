@@ -23,6 +23,8 @@ data class BackupStatus(
     val pendingCount: Int = 0,
     val photosBackedUp: Int = 0,
     val videosBackedUp: Int = 0,
+    /** Cumulative bytes uploaded, summed from the local index. */
+    val backedUpBytes: Long = 0L,
     val lastRunAtMillis: Long = 0L,
     val lastResultMessage: String = "",
     val lastErrors: List<String> = emptyList(),
@@ -121,6 +123,7 @@ class BackupRepository(
         // Counts are tracked per media type so the home screen can label them honestly.
         val photosBackedUp = all.count { !it.isVideo && known[it.id] == it.fingerprint }
         val videosBackedUp = all.count { it.isVideo && known[it.id] == it.fingerprint }
+        val backedUpBytesAtStart = withContext(Dispatchers.IO) { dao.totalUploadedBytes() } ?: 0L
         // Resolved over the whole scan so a new file can never land on the key of one
         // that is already backed up.
         val keys = settings.s3KeysFor(all)
@@ -133,6 +136,7 @@ class BackupRepository(
                 pendingCount = pending.size,
                 photosBackedUp = photosBackedUp,
                 videosBackedUp = videosBackedUp,
+                backedUpBytes = backedUpBytesAtStart,
             )
         }
         if (pending.isEmpty()) {
@@ -211,6 +215,8 @@ class BackupRepository(
                         uploadedBytes = bytesBeforeThisFile,
                         currentFileBytes = item.sizeBytes,
                         lastErrors = errors.toList(),
+                        // Grows as the run progresses so the UI total is live.
+                        backedUpBytes = backedUpBytesAtStart + uploadedBytes,
                     )
                 }
             }
@@ -237,6 +243,7 @@ class BackupRepository(
                 lastErrors = result.errors,
                 photosBackedUp = photosBackedUp + uploadedPhotos,
                 videosBackedUp = videosBackedUp + uploadedVideos,
+                backedUpBytes = backedUpBytesAtStart + uploadedBytes,
             )
         }
         return result
@@ -258,6 +265,9 @@ class BackupRepository(
             MediaScanner.scan(appContext, settings.backupImages, settings.backupVideos)
         }
         val latestUpload = withContext(Dispatchers.IO) { dao.latestUploadAtMillis() } ?: 0L
+        // Comes straight from the index, so it is unaffected by which media types are
+        // currently enabled and stays correct across restarts.
+        val backedUpBytes = withContext(Dispatchers.IO) { dao.totalUploadedBytes() } ?: 0L
         _status.update {
             it.copy(
                 pendingCount = all.count { item -> known[item.id] != item.fingerprint },
@@ -267,6 +277,7 @@ class BackupRepository(
                 videosBackedUp = all.count { item ->
                     item.isVideo && known[item.id] == item.fingerprint
                 },
+                backedUpBytes = backedUpBytes,
                 // Keep the most recent of the in-session run and the newest upload in
                 // the index, so "last backup" survives an app restart instead of
                 // resetting to "no backups yet".

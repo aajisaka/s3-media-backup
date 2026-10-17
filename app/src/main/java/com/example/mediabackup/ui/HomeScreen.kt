@@ -41,8 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.mediabackup.data.BackupSettings
 import com.example.mediabackup.data.BackupStatus
-import java.util.Date
-import java.util.Locale
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -196,7 +195,12 @@ private fun StatusCard(status: BackupStatus, settings: BackupSettings) {
                 HorizontalThinRule()
 
                 Text(
-                    text = "${status.pendingCount} pending",
+                    text = buildString {
+                        append("${status.pendingCount} pending")
+                        if (status.backedUpBytes > 0) {
+                            append(" · ${formatBytes(status.backedUpBytes)} uploaded")
+                        }
+                    },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
@@ -295,29 +299,3 @@ private fun ErrorsCard(errors: List<String>) {
         }
     }
 }
-
-internal fun formatBytes(bytes: Long): String {
-    if (bytes <= 0) return "0 B"
-    val units = arrayOf("B", "KB", "MB", "GB", "TB")
-    var value = bytes.toDouble()
-    var unit = 0
-    while (value >= 1024 && unit < units.size - 1) {
-        value /= 1024
-        unit++
-    }
-    return if (unit == 0) "${bytes} B" else String.format(Locale.US, "%.1f %s", value, units[unit])
-}
-
-/**
- * Locale-aware date and time. Using a fixed pattern with a locale-dependent month
- * name mixes conventions (e.g. "10月 18, 2026" on a Japanese device), so let the
- * platform pick the ordering for the device locale.
- */
-private val dateFormat: java.text.DateFormat =
-    java.text.DateFormat.getDateTimeInstance(
-        java.text.DateFormat.MEDIUM,
-        java.text.DateFormat.SHORT,
-        Locale.getDefault(),
-    )
-
-internal fun formatWhen(millis: Long): String = dateFormat.format(Date(millis))

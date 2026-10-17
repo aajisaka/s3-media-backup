@@ -52,6 +52,13 @@ interface UploadedMediaDao {
     @Query("SELECT MAX(uploadedAtMillis) FROM uploaded_media")
     suspend fun latestUploadAtMillis(): Long?
 
+    /**
+     * Total bytes the app has uploaded. `SUM` over an empty table is SQL NULL, so the
+     * return type is nullable and callers coalesce to zero.
+     */
+    @Query("SELECT SUM(sizeBytes) FROM uploaded_media")
+    suspend fun totalUploadedBytes(): Long?
+
     @Query("DELETE FROM uploaded_media WHERE mediaStoreId = :mediaStoreId")
     suspend fun delete(mediaStoreId: Long)
 

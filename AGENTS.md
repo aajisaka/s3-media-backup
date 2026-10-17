@@ -276,11 +276,13 @@ Two consequences to keep in mind:
 ### Testing
 
 JVM unit tests **cannot touch `android.net.Uri`** — the stub jar throws
-`RuntimeException: Method ... not mocked`. That is why the two pieces of pure logic
-were extracted to top-level functions:
+`RuntimeException: Method ... not mocked`. That is why the pure logic is extracted to
+top-level functions rather than left inside classes that need Android types:
 
 - `resolveKeys()` — `data/SettingsRepository.kt`
 - `mediaPermissionsFor()` — `data/Permissions.kt`
+- `formatBytes()` / `formatWhen()` — `ui/Formatting.kt` (kept out of the Compose files
+  for the same reason, even though they touch no Android API at all)
 
 `Build.VERSION.SDK_INT` is also pinned to `0` in JVM tests, so any version branching
 must take the API level as a **parameter** to be testable.
