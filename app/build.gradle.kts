@@ -47,10 +47,6 @@ android {
     }
 
     lint {
-        // False positive: this app registers ActivityResult contracts on a
-        // ComponentActivity and uses no Fragments at all, so the Fragment 1.3.0
-        // requirement does not apply.
-        disable += "InvalidFragmentVersionForActivityResult"
         abortOnError = true
     }
 }
@@ -87,4 +83,15 @@ dependencies {
     // aws-android-sdk-core, which aws-android-sdk-s3 brings in transitively.
 
     testImplementation(libs.junit)
+
+    // The AWS SDK declares very old versions of some transitive dependencies. These
+    // constraints lift them to current stable without forking or replacing the SDK.
+    // A constraint only raises a version that is already on the classpath, so this
+    // cannot introduce anything new.
+    constraints {
+        // aws-android-sdk-s3:2.81.1 -> appcompat:1.2.0 (2020) -> fragment:1.1.0 (2020)
+        implementation(libs.androidx.appcompat)
+        // aws-android-sdk-core:2.81.1 -> gson:2.8.9 (2021)
+        implementation(libs.gson)
+    }
 }

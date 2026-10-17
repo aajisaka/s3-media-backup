@@ -12,6 +12,10 @@ room = "2.6.1"
 awsAndroidSdk = "2.81.1"
 junit = "4.13.2"
 
+# Transitives the AWS SDK pins at very old versions; lifted via constraints below.
+appcompat = "1.7.1"
+gson = "2.13.1"
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
@@ -34,6 +38,9 @@ androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = 
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
 aws-android-sdk-s3 = { group = "com.amazonaws", name = "aws-android-sdk-s3", version.ref = "awsAndroidSdk" }
+
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
