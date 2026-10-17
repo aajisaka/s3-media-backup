@@ -48,6 +48,10 @@ interface UploadedMediaDao {
     @Query("SELECT COUNT(*) FROM uploaded_media")
     suspend fun count(): Int
 
+    /** Newest successful upload, used to show "last backup" across app restarts. */
+    @Query("SELECT MAX(uploadedAtMillis) FROM uploaded_media")
+    suspend fun latestUploadAtMillis(): Long?
+
     @Query("DELETE FROM uploaded_media WHERE mediaStoreId = :mediaStoreId")
     suspend fun delete(mediaStoreId: Long)
 

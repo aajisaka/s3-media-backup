@@ -21,11 +21,19 @@ data class BackupStatus(
     val uploadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val pendingCount: Int = 0,
-    val backedUpCount: Int = 0,
+    val photosBackedUp: Int = 0,
+    val videosBackedUp: Int = 0,
     val lastRunAtMillis: Long = 0L,
     val lastResultMessage: String = "",
     val lastErrors: List<String> = emptyList(),
 ) {
+    /**
+     * Totals across both media types. The per-type counts above are what the home
+     * screen shows, because an icon labelled "photos" next to a combined total is
+     * misleading.
+     */
+    val backedUpCount: Int get() = photosBackedUp + videosBackedUp
+
     val fractionOfFile: Float
         get() = if (currentFileSize <= 0L) 0f else (currentFileBytes.toFloat() / currentFileSize)
 
@@ -110,6 +118,9 @@ class BackupRepository(
         val pending = all.filter { known[it.id] != it.fingerprint }
         val totalBytes = pending.sumOf { it.sizeBytes }
         val skipped = all.size - pending.size
+        // Counts are tracked per media type so the home screen can label them honestly.
+        val photosBackedUp = all.count { !it.isVideo && known[it.id] == it.fingerprint }
+        val videosBackedUp = all.count { it.isVideo && known[it.id] == it.fingerprint }
         // Resolved over the whole scan so a new file can never land on the key of one
         // that is already backed up.
         val keys = settings.s3KeysFor(all)
@@ -120,7 +131,8 @@ class BackupRepository(
                 totalCount = pending.size,
                 totalBytes = totalBytes,
                 pendingCount = pending.size,
-                backedUpCount = skipped,
+                photosBackedUp = photosBackedUp,
+                videosBackedUp = videosBackedUp,
             )
         }
         if (pending.isEmpty()) {
@@ -148,6 +160,8 @@ class BackupRepository(
 
         val errors = ArrayList<String>()
         var uploaded = 0
+        var uploadedPhotos = 0
+        var uploadedVideos = 0
         var uploadedBytes = 0L
         var completed = 0
         var bytesBeforeThisFile = 0L
@@ -182,6 +196,7 @@ class BackupRepository(
                         )
                     }
                     uploaded++
+                    if (item.isVideo) uploadedVideos++ else uploadedPhotos++
                     uploadedBytes += item.sizeBytes
                 } catch (e: Exception) {
                     val label = e.message ?: e.javaClass.simpleName
@@ -220,17 +235,20 @@ class BackupRepository(
                 lastRunAtMillis = System.currentTimeMillis(),
                 lastResultMessage = result.summary,
                 lastErrors = result.errors,
-                backedUpCount = skipped + uploaded,
+                photosBackedUp = photosBackedUp + uploadedPhotos,
+                videosBackedUp = videosBackedUp + uploadedVideos,
             )
         }
         return result
     }
 
-    /** Recomputes the "pending vs backed up" counts without uploading anything. */
+    /** Recomputes the pending and per-media-type backed-up counts without uploading. */
     suspend fun refreshCounts() {
         val settings = settingsRepository.current()
         if (!Permissions.hasMediaAccess(appContext, settings)) {
-            _status.update { it.copy(pendingCount = 0, backedUpCount = 0) }
+            _status.update {
+                it.copy(pendingCount = 0, photosBackedUp = 0, videosBackedUp = 0)
+            }
             return
         }
         val known = withContext(Dispatchers.IO) {
@@ -239,9 +257,21 @@ class BackupRepository(
         val all = withContext(Dispatchers.IO) {
             MediaScanner.scan(appContext, settings.backupImages, settings.backupVideos)
         }
-        val pending = all.count { known[it.id] != it.fingerprint }
+        val latestUpload = withContext(Dispatchers.IO) { dao.latestUploadAtMillis() } ?: 0L
         _status.update {
-            it.copy(pendingCount = pending, backedUpCount = all.size - pending)
+            it.copy(
+                pendingCount = all.count { item -> known[item.id] != item.fingerprint },
+                photosBackedUp = all.count { item ->
+                    !item.isVideo && known[item.id] == item.fingerprint
+                },
+                videosBackedUp = all.count { item ->
+                    item.isVideo && known[item.id] == item.fingerprint
+                },
+                // Keep the most recent of the in-session run and the newest upload in
+                // the index, so "last backup" survives an app restart instead of
+                // resetting to "no backups yet".
+                lastRunAtMillis = maxOf(it.lastRunAtMillis, latestUpload),
+            )
         }
     }
 

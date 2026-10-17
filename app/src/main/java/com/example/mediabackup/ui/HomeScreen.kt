@@ -41,7 +41,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.mediabackup.data.BackupSettings
 import com.example.mediabackup.data.BackupStatus
-import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
@@ -104,7 +103,7 @@ fun HomeScreen(
                 )
             }
 
-            StatusCard(status)
+            StatusCard(status, settings)
 
             Button(
                 onClick = onBackupNow,
@@ -137,7 +136,7 @@ fun HomeScreen(
 }
 
 @Composable
-private fun StatusCard(status: BackupStatus) {
+private fun StatusCard(status: BackupStatus, settings: BackupSettings) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -175,14 +174,31 @@ private fun StatusCard(status: BackupStatus) {
                     )
                 }
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Stat(Icons.Outlined.Image, "${status.backedUpCount}", "backed up")
-                    Stat(Icons.Outlined.Movie, "${status.pendingCount}", "pending")
-                    Stat(Icons.Outlined.CheckCircle, "${status.backedUpCount + status.pendingCount}", "total")
+                Text(
+                    text = "Backed up",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+                    // Only show the media types currently being backed up: with photos
+                    // disabled the scan never looks at them, so a "0 photos" tile would
+                    // be reporting on something the app is no longer tracking.
+                    if (settings.backupImages) {
+                        Stat(Icons.Outlined.Image, "${status.photosBackedUp}", "photos")
+                    }
+                    if (settings.backupVideos) {
+                        Stat(Icons.Outlined.Movie, "${status.videosBackedUp}", "videos")
+                    }
+                    Stat(Icons.Outlined.CheckCircle, "${status.backedUpCount}", "total")
                 }
 
                 HorizontalThinRule()
 
+                Text(
+                    text = "${status.pendingCount} pending",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Text(
                     text = if (status.lastRunAtMillis > 0) {
                         "Last backup: ${formatWhen(status.lastRunAtMillis)}" +
@@ -292,6 +308,16 @@ internal fun formatBytes(bytes: Long): String {
     return if (unit == 0) "${bytes} B" else String.format(Locale.US, "%.1f %s", value, units[unit])
 }
 
-private val dateFormat = SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault())
+/**
+ * Locale-aware date and time. Using a fixed pattern with a locale-dependent month
+ * name mixes conventions (e.g. "10月 18, 2026" on a Japanese device), so let the
+ * platform pick the ordering for the device locale.
+ */
+private val dateFormat: java.text.DateFormat =
+    java.text.DateFormat.getDateTimeInstance(
+        java.text.DateFormat.MEDIUM,
+        java.text.DateFormat.SHORT,
+        Locale.getDefault(),
+    )
 
 internal fun formatWhen(millis: Long): String = dateFormat.format(Date(millis))
