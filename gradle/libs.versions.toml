@@ -1,19 +1,21 @@
 [versions]
-agp = "8.7.3"
-kotlin = "2.0.21"
-ksp = "2.0.21-1.0.28"
+agp = "9.4.1"
+# Must match the KGP version AGP bundles (AGP 9 has built-in Kotlin and brings its
+# own KGP). See the "Non-obvious constraints" section in AGENTS.md.
+kotlin = "2.2.10"
+ksp = "2.2.10-2.0.2"
 
-coreKtx = "1.15.0"
-activityCompose = "1.9.3"
-lifecycle = "2.8.7"
-composeBom = "2024.12.01"
-workManager = "2.10.0"
-room = "2.6.1"
+coreKtx = "1.19.1"
+activityCompose = "1.13.0"
+lifecycle = "2.11.0"
+composeBom = "2026.06.01"
+workManager = "2.12.0"
+room = "2.8.5"
 awsAndroidSdk = "2.81.1"
 junit = "4.13.2"
 
 # Transitives the AWS SDK pins at very old versions; lifted via constraints below.
-appcompat = "1.7.1"
+appcompat = "1.8.0"
 gson = "2.13.1"
 
 [libraries]
@@ -46,6 +48,5 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

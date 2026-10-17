@@ -1,18 +1,25 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // No kotlin.android plugin: AGP 9 has built-in Kotlin. See AGENTS.md.
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
 
 android {
     namespace = "com.example.mediabackup"
-    compileSdk = 35
+    // API 37 is only published as minor-versioned platforms (android-37.0/.1/.2) and
+    // only on the canary SDK channel. AGP 9.4 supports up to 37. compose 1.11+ and
+    // androidx.core 1.19+ require compiling against 37.
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
 
     defaultConfig {
         applicationId = "com.example.mediabackup"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0"
         vectorDrawables.useSupportLibrary = true
@@ -35,6 +42,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // No kotlin { compilerOptions { jvmTarget = ... } } needed: with built-in Kotlin
+    // the Kotlin jvmTarget defaults to android.compileOptions.targetCompatibility.
 
     buildFeatures {
         compose = true
@@ -48,12 +57,6 @@ android {
 
     lint {
         abortOnError = true
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 

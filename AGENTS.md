@@ -17,15 +17,24 @@ Gradle fails with "SDK location not found" or picks the wrong JDK.
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/35.0.0:$PATH"
+export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/36.0.0:$PATH"
 ```
 
 | | |
 | --- | --- |
-| JDK | 17 (Zulu). AGP 8.7.3 requires 17. |
+| JDK | 17 (Zulu). AGP 9.4 requires 17. |
 | Android SDK | `/opt/homebrew/share/android-commandlinetools`, via `brew install --cask android-commandlinetools` |
-| SDK packages | `platform-tools`, `platforms;android-35`, `build-tools;35.0.0` |
-| Gradle | 8.11.1 via `./gradlew`. Never install a global Gradle. |
+| SDK packages | `platform-tools`, `platforms;android-36`, `platforms;android-37.2`, `build-tools;36.0.0` |
+| Gradle | 9.6.1 via `./gradlew`. Never install a global Gradle. |
+
+`platforms;android-37.2` is **only published on the canary SDK channel**:
+
+```bash
+sdkmanager --channel=3 "platforms;android-37.2"
+```
+
+Without it the build fails in `checkDebugAarMetadata` because androidx.core 1.19+ and
+compose 1.11+ require compiling against API 37.
 
 `local.properties` holds `sdk.dir` and is **gitignored**. It must exist locally; if a
 fresh clone fails to build, recreate it:
@@ -109,6 +118,58 @@ MediaScanner ──► BackupRepository ──► S3Uploader ──► S3
 These are the ones that cost real time to work out. Each looks like an arbitrary
 choice in the code.
 
+### Build toolchain (AGP 9)
+
+AGP 9 is a major break from 8.x. These are the traps:
+
+- **Built-in Kotlin.** AGP 9 compiles Kotlin itself and *rejects* the
+  `org.jetbrains.kotlin.android` plugin with an explicit error. There is deliberately
+  no `kotlin-android` entry in the version catalog or either build file. Don't add it
+  back.
+- **AGP pins KGP and KSP.** AGP resolves its own Kotlin Gradle plugin and KSP. If the
+  versions in `libs.versions.toml` don't match, KSP fails at run time with the
+  useless-looking `e: [ksp] java.lang.IllegalStateException: unexpected jvm signature
+  V`. Check what AGP actually wants before bumping:
+
+  ```bash
+  ./gradlew buildEnvironment --console=plain -q | grep -oE 'org.jetbrains.kotlin:kotlin-gradle-plugin:[0-9.]+|com.google.devtools.ksp:symbol-processing-gradle-plugin:[0-9.-]+'
+  # AGP 9.4.1 -> kotlin-gradle-plugin 2.2.10, symbol-processing-gradle-plugin 2.2.10-2.0.2
+  ```
+
+- **KSP vs built-in Kotlin.** KSP 2.2.10-2.0.2 registers generated sources through the
+  `kotlin.sourceSets` DSL, which built-in Kotlin rejects. `gradle.properties` carries
+  `android.disallowKotlinSourceSets=false`, AGP's documented escape hatch. Drop it
+  once KSP registers generated sources through the variant API.
+- **No `kotlin { compilerOptions { jvmTarget } }`.** With built-in Kotlin the Kotlin
+  `jvmTarget` defaults to `android.compileOptions.targetCompatibility`, so setting
+  `compileOptions` is enough.
+- **compileSdk 37 is minor-versioned and canary-only.** There is no
+  `platforms;android-37`; only `android-37.0/.1/.2`. The DSL is:
+
+  ```kotlin
+  compileSdk {
+      version = release(37) {
+          minorApiLevel = 2
+      }
+  }
+  ```
+
+  Not `release(37, 2)` and not `minor = 2` — both fail with build-script compilation
+  errors.
+
+- **When AGP DSL docs are unclear, read the bytecode.** The API reference pages are
+  JS-rendered and often fetch empty. The interfaces live in `gradle-common-api` in the
+  Gradle cache and are definitive:
+
+  ```bash
+  JAR=$(find ~/.gradle/caches -name "gradle-common-api-*.jar" | head -1)
+  javap -cp "$JAR" com.android.build.api.dsl.CompileSdkReleaseSpec
+  ```
+
+- Compose BOM **2026.09.00** (compose 1.12.x) needs a higher compileSdk than we use;
+  we pin **2026.06.01** (compose 1.11.4). Verify any bump with
+  `:app:checkDebugAarMetadata`, which reports the required compileSdk precisely.
+
 ### AWS SDK
 
 - Artifacts are **AAR**, not JAR.
@@ -130,7 +191,7 @@ choice in the code.
   `uploadSinglePut` opens the content stream *inside* the retry block. Restructuring
   that is an easy way to silently send truncated bodies.
 
-### Dependency versions
+### Dependency versions and CVE scanning
 
 `aws-android-sdk-s3:2.81.1` declares `appcompat:1.2.0` (2020), and
 `aws-android-sdk-core` declares `gson:2.8.9` (2021). `app/build.gradle.kts` lifts
@@ -145,9 +206,28 @@ them `fragment:1.1.0` returns.
 | `com.google.code.gson:gson` | 2.8.9 | CVE-2022-25647 |
 | `junit:junit` (test only) | 4.13.1 | CVE-2020-15250 |
 
-To re-run the CVE review: resolve the graph and query OSV.dev (GitHub Advisory
-Database + NVD) for every `group:artifact:version`. Validate the scanner against a
-known-bad package such as `log4j-core:2.14.1` before trusting a clean result.
+**Dependabot alerts cover the build classpath, not just the app.** This is the single
+most misleading thing about the alerts on this repo. Every one of the 61 open alerts
+carried `manifest_path: settings.gradle.kts` — they were Gradle plugin transitives
+(netty via `io.grpc:grpc-netty`, BouncyCastle, commons-compress, jdom2, jose4j) pulled
+by AGP. None of them ship in the APK.
+
+So a scan of `releaseRuntimeClasspath` and a scan of the buildscript classpath answer
+different questions, and only the first one affects users. Scan both:
+
+```bash
+./gradlew --init-script <printdeps.gradle> :app:printResolvedDeps   # runtime classpath
+./gradlew buildEnvironment --console=plain -q                        # build classpath
+```
+
+Then query OSV.dev for every `group:artifact:version`. **Validate the scanner against
+a known-bad package such as `log4j-core:2.14.1` before trusting a clean result** —
+a silently broken query looks exactly like a clean bill of health.
+
+The AGP 9 upgrade took the build classpath from 61 vulnerable modules to 12, all deep
+inside AGP's own legacy internals (`gson:2.8.0`, `guava:18.0`, `httpclient:4.5.6`).
+Those are not fixable without forking AGP and are reasonable to dismiss in Dependabot
+as development dependencies.
 
 ### S3 keys
 
