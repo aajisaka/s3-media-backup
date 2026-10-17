@@ -217,7 +217,7 @@ No `s3:GetObject`, no `s3:DeleteObject`, no listing outside `media/`.
 ## Step 2 — Build
 
 ```bash
-cd /Users/aajisaka/git/movie-store
+cd s3-media-backup          # the repo root, wherever you cloned it
 
 export JAVA_HOME=$(/usr/libexec/java_home -v 17)
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
