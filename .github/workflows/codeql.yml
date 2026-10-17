@@ -1,0 +1,68 @@
+name: CodeQL
+
+# Advanced setup. CodeQL's default setup (autobuild) is unreliable for this repo: see
+# the build step below for why. If default setup is still enabled, disable it under
+# Settings -> Code security and enable advanced setup, otherwise both run.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a newly published CodeQL query still gets run.
+    - cron: "17 3 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (java-kotlin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      security-events: write
+      packages: read
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: java-kotlin
+          # Not "none": that build mode is Java-only, and every source file in this
+          # project is Kotlin. Not "autobuild": it runs `./gradlew clean assemble`
+          # without disabling the build cache, so on any commit that does not change
+          # build inputs (a docs-only change, for instance) every compile task is
+          # served FROM-CACHE, the Kotlin compiler never runs, CodeQL's extractor sees
+          # nothing, and the job fails with "could not automatically build any of it".
+          build-mode: manual
+
+      - name: Build
+        # --no-build-cache is load-bearing, not an optimisation. CodeQL extracts code
+        # by hooking the compiler, so a cache hit on compileDebugKotlin means zero
+        # Kotlin is extracted. Do not remove it.
+        #
+        # `clean` is belt-and-braces against stale outputs making the compile task
+        # UP-TO-DATE, which has the same effect as a cache hit: no compiler, no
+        # extraction. A fresh CI checkout has no build directory, but this costs
+        # almost nothing and removes the whole class of failure.
+        run: ./gradlew clean assembleDebug --no-build-cache --no-daemon
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:java-kotlin"

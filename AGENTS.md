@@ -155,6 +155,15 @@ AGP 9 is a major break from 8.x. These are the traps:
 - Compose BOM **2026.09.00** (compose 1.12.x) needs a higher compileSdk than we use;
   we pin **2026.06.01** (compose 1.11.4). Verify any bump with
   `:app:checkDebugAarMetadata`, which reports the required compileSdk precisely.
+- **CI must not cache the Gradle build.** `.github/workflows/codeql.yml` runs
+  `clean assembleDebug --no-build-cache` deliberately. CodeQL extracts code by hooking
+  the Kotlin compiler, so a compile task served FROM-CACHE — or merely left UP-TO-DATE
+  — means nothing is extracted and the job fails with *"could not automatically build
+  any of it"*. Adding `cache: gradle`, or dropping `--no-build-cache` or `clean`, will
+  reintroduce it. That is also why the failure only appeared on docs-only commits:
+  unchanged build inputs meant cache hits.
+  `build-mode: none` is not an alternative — it excludes Kotlin entirely, and every
+  source file here is Kotlin.
 
 ### AWS SDK
 
