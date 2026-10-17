@@ -192,8 +192,8 @@ them `fragment:1.1.0` returns.
 | `com.google.code.gson:gson` | 2.8.9 | CVE-2022-25647 |
 | `junit:junit` (test only) | 4.13.1 | CVE-2020-15250 |
 
-**Dependabot alerts cover the build classpath, not just the app.** This is the single
-most misleading thing about the alerts on this repo. Most of them carry
+**Dependabot alerts cover the build classpath, not just the app.** This is the first of
+two misleading things about the alerts on this repo. Most of them carry
 `manifest_path: settings.gradle.kts` — Gradle plugin transitives pulled by AGP (netty
 via `io.grpc:grpc-netty`, BouncyCastle, commons-compress, jdom2, jose4j). None of them
 ship in the APK.
@@ -210,17 +210,51 @@ Then query OSV.dev for every `group:artifact:version`. **Validate the scanner ag
 a known-bad package such as `log4j-core:2.14.1` before trusting a clean result** —
 a silently broken query looks exactly like a clean bill of health.
 
-The remaining ones (BouncyCastle, commons-lang3, httpclient, jose4j, jdom2) are fixed
-by pinning the patched versions on the root project's `buildscript` classpath in
-`build.gradle.kts` — Gradle's highest-version-wins conflict resolution lifts them.
-`buildEnvironment` prints `declared -> resolved`, so it is ambiguous about which
-version won; resolve it properly with an init script that reads
-`buildscript.configurations.*.incoming.resolutionResult`.
+#### Overridden build-classpath versions
+
+The rest (BouncyCastle, commons-lang3, httpclient, jose4j, jdom2) are lifted by
+pinning the patched versions on the root project's `buildscript` classpath in
+`build.gradle.kts`. That genuinely changes what the build runs. It will **not** clear
+the Dependabot alerts for those packages, and a stubborn alert count is not evidence
+that the pin failed.
+
+GitHub's dependency graph records *declared* versions, not Gradle's conflict-resolved
+outcome. A pin adds the new version **alongside** the old one that a transitive parent
+still declares, and Dependabot flags the old one. The SBOM lists both:
+
+```bash
+gh api repos/OWNER/REPO/dependency-graph/sbom \
+  --jq '.sbom.packages[] | select(.name | test("bouncycastle")) | "\(.name) \(.versionInfo)"'
+# org.bouncycastle:bcprov-jdk18on 1.80.2   AND   1.85
+```
+
+The proof that resolution is not the input: `httpclient` resolved to 4.5.14 with **no
+pin at all**, and Dependabot still flagged `< 4.5.13`.
+
+Packages pulled by a single parent *do* clear, because the pin replaces rather than
+adds — which is why `jose4j` and `jdom2` cleared while BouncyCastle did not.
+
+Those alerts were dismissed as *"vulnerable code is not actually used"*. Three
+consequences:
+
+- Waiting does not help. The old versions stay in GitHub's graph until an **AGP release
+  declares the newer ones itself**. AGP 9.4.1 is current stable and declares
+  BouncyCastle 1.80.2, so this is a waiting game, not a task.
+- Do **not** switch to `resolutionStrategy.force`. It overrides at resolution without
+  declaring anything, so the graph would show only the old versions and the alerts
+  would lose their counter-evidence entirely.
+- Verify what actually runs instead of trusting the alert count. `buildEnvironment`
+  prints `declared -> resolved`, so it is ambiguous about which version won; read the
+  resolution result directly:
+
+  ```bash
+  ./gradlew --init-script <printbuildscript.gradle> :printBuildscriptResolved
+  ```
 
 That `buildscript` block is build-tool only and does **not** leak into the app —
 re-verify with a runtime classpath scan after touching it.
 
-One alert remains: `kotlin-gradle-plugin` requires KGP 2.4.20-Beta1. That is a beta,
+One alert is genuine: `kotlin-gradle-plugin` requires KGP 2.4.20-Beta1. That is a beta,
 and moving KGP means KSP must move in lockstep or it fails with "unexpected jvm
 signature V". Do not chase it. It is also about the Kotlin **build cache**, which this
 project does not enable — `org.gradle.caching=true` is Gradle's own cache, a different
