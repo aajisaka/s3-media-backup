@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup for Android 11 and lower. Settings and the uploaded-media index
+     are safe to carry across devices; nothing else needs to be preserved. -->
+<full-backup-content>
+    <include domain="sharedpref" path="." />
+    <include domain="database" path="." />
+</full-backup-content>

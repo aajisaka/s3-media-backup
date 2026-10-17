@@ -1,0 +1,85 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cognito Identity Pool + IAM role that lets the S3 Media Backup Android app upload
+  photos and videos to a prefix in an S3 bucket. The role deliberately grants
+  write-only access: no GetObject, no DeleteObject, no ListBucket on other prefixes.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Name of the existing S3 bucket to back up into (must be in this region).
+  KeyPrefix:
+    Type: String
+    Default: media
+    Description: >
+      Key prefix the app is allowed to write under, e.g. "media" gives media/photos/...
+  ProjectName:
+    Type: String
+    Default: s3-media-backup
+
+Resources:
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      IdentityPoolName: !Sub "${ProjectName}_identity_pool"
+      # Guest access: the app has no user sign-in. See the README for the security
+      # implications and how to tighten this.
+      AllowUnauthenticatedIdentities: true
+
+  UnauthenticatedRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-unauth-upload"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                cognito-identity.amazonaws.com:amr: unauthenticated
+      Policies:
+        - PolicyName: UploadOnlyToPrefix
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListOwnPrefixOnly
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub "arn:aws:s3:::${BucketName}"
+                Condition:
+                  StringLike:
+                    s3:prefix:
+                      - !Sub "${KeyPrefix}/*"
+
+              - Sid: WriteOnlyNoReadNoDelete
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource: !Sub "arn:aws:s3:::${BucketName}/${KeyPrefix}/*"
+
+  IdentityPoolRoleAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        unauthenticated: !GetAtt UnauthenticatedRole.Arn
+
+Outputs:
+  IdentityPoolId:
+    Description: Paste this into the app's Settings screen.
+    Value: !Ref IdentityPool
+  UnauthenticatedRoleArn:
+    Description: IAM role assumed by the app for uploads.
+    Value: !GetAtt UnauthenticatedRole.Arn
+  SampleKeyPrefix:
+    Description: Objects are written under this prefix.
+    Value: !Sub "${KeyPrefix}/"

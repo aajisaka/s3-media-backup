@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">S3 Media Backup</string>
+    <string name="notification_channel_name">Backups</string>
+    <string name="notification_channel_description">Progress of photo and video backups</string>
+</resources>

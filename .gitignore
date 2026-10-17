@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Signing
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+
+# AWS / secrets
+*.pem
+.env
