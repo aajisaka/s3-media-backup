@@ -4,8 +4,15 @@ Orientation for an AI coding agent picking this repo up cold. It records the thi
 that are expensive to rediscover: environment setup, verified commands, and the
 non-obvious constraints behind decisions that look arbitrary in the code.
 
-Read `README.md` first for what the app does and how to configure AWS. This file is
-about *working on* the code.
+Read `README.md` first for what the app does, how to build it, and how to configure
+AWS. This file is about *working on* the code.
+
+The split, so the two files do not drift back into restating each other:
+
+- **README** owns setup and user-facing behaviour — prerequisites, build and install
+  steps, AWS configuration, S3 object layout, what gets skipped, troubleshooting.
+- **AGENTS.md** owns *why the code is the way it is* and the invariants that are easy
+  to break. Point at the README rather than restating it.
 
 ---
 
@@ -20,28 +27,12 @@ export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/36.0.0:$PATH"
 ```
 
-| | |
-| --- | --- |
-| JDK | 17 (Zulu). AGP 9.4 requires 17. |
-| Android SDK | `/opt/homebrew/share/android-commandlinetools`, via `brew install --cask android-commandlinetools` |
-| SDK packages | `platform-tools`, `platforms;android-36`, `platforms;android-37.2`, `build-tools;36.0.0` |
-| Gradle | 9.6.1 via `./gradlew`. Never install a global Gradle. |
+JDK 17 is mandatory (AGP 9.4 rejects other versions) and Gradle comes from `./gradlew`
+— never install a global one. The SDK packages to install, including the
+canary-channel platform, are in [README → Prerequisites](README.md#prerequisites).
 
-`platforms;android-37.2` is **only published on the canary SDK channel**:
-
-```bash
-sdkmanager --channel=3 "platforms;android-37.2"
-```
-
-Without it the build fails in `checkDebugAarMetadata` because androidx.core 1.19+ and
-compose 1.11+ require compiling against API 37.
-
-`local.properties` holds `sdk.dir` and is **gitignored**. It must exist locally; if a
-fresh clone fails to build, recreate it:
-
-```properties
-sdk.dir=/opt/homebrew/share/android-commandlinetools
-```
+`local.properties` holds `sdk.dir` and is gitignored. It must exist locally or a fresh
+clone fails with "SDK location not found".
 
 This repository is **public**. Do not commit machine-specific identifiers: no home
 directory paths, no device serials, no email addresses, no bucket names. Use generic
@@ -52,18 +43,13 @@ placeholders in docs.
 ## Commands
 
 ```bash
-./gradlew :app:testDebugUnitTest        # 18 unit tests, ~5s
+./gradlew :app:testDebugUnitTest        # 27 unit tests, ~5s
 ./gradlew assemble                      # debug + release APKs
 ./gradlew :app:lint                     # static analysis (abortOnError = true)
 ./gradlew clean
 ```
 
-Artifacts:
-
-| Path | Notes |
-| --- | --- |
-| `app/build/outputs/apk/release/app-release.apk` | The one to install. Signed with the local debug key. |
-| `app/build/outputs/apk/debug/app-debug.apk` | Larger, debug tooling. |
+The APK to install is `app/build/outputs/apk/release/app-release.apk`.
 
 `assemble` runs `lintVitalRelease`, so a release build fails on any lint error. Keep
 lint clean rather than disabling checks — see "Lint" below for a case where the right
@@ -207,10 +193,10 @@ them `fragment:1.1.0` returns.
 | `junit:junit` (test only) | 4.13.1 | CVE-2020-15250 |
 
 **Dependabot alerts cover the build classpath, not just the app.** This is the single
-most misleading thing about the alerts on this repo. Every one of the 61 open alerts
-carried `manifest_path: settings.gradle.kts` — they were Gradle plugin transitives
-(netty via `io.grpc:grpc-netty`, BouncyCastle, commons-compress, jdom2, jose4j) pulled
-by AGP. None of them ship in the APK.
+most misleading thing about the alerts on this repo. Most of them carry
+`manifest_path: settings.gradle.kts` — Gradle plugin transitives pulled by AGP (netty
+via `io.grpc:grpc-netty`, BouncyCastle, commons-compress, jdom2, jose4j). None of them
+ship in the APK.
 
 So a scan of `releaseRuntimeClasspath` and a scan of the buildscript classpath answer
 different questions, and only the first one affects users. Scan both:
@@ -224,9 +210,8 @@ Then query OSV.dev for every `group:artifact:version`. **Validate the scanner ag
 a known-bad package such as `log4j-core:2.14.1` before trusting a clean result** —
 a silently broken query looks exactly like a clean bill of health.
 
-The AGP 9 upgrade took the build classpath from 61 vulnerable modules to 1. The rest
-(BouncyCastle, commons-lang3, httpclient, jose4j, jdom2) are fixed by pinning the
-patched versions on the root project's `buildscript` classpath in
+The remaining ones (BouncyCastle, commons-lang3, httpclient, jose4j, jdom2) are fixed
+by pinning the patched versions on the root project's `buildscript` classpath in
 `build.gradle.kts` — Gradle's highest-version-wins conflict resolution lifts them.
 `buildEnvironment` prints `declared -> resolved`, so it is ambiguous about which
 version won; resolve it properly with an init script that reads
@@ -243,13 +228,9 @@ mechanism. Revisit when a stable KGP 2.4.20+ ships.
 
 ### S3 keys
 
-`<prefix>/<photos|videos>/<yyyy>/<MM>/<filename>`
-
-Two different files can share a display name in the same month, and writing both to
-one key silently destroys one. `BackupSettings.s3KeysFor()` appends `~<mediaStoreId>`
-to the second and later members of a collision group.
-
-Two invariants worth preserving:
+`<prefix>/<photos|videos>/<yyyy>/<MM>/<filename>`, with `~<mediaStoreId>` appended to
+the second and later members of a collision group. The user-facing rule and worked
+example are in the README; what matters when editing the code is the two invariants:
 
 - Collisions are resolved over the **full scan**, not just pending files. Resolving
   over pending files only would let a new file land on the key of one already in S3.
@@ -261,17 +242,13 @@ Treat it as a migration, not a refactor.
 
 ### Skip logic
 
-The Room `uploaded_media` table stores a fingerprint of `id:size:takenAtMillis`.
-Skipping is **local-only** — no `HeadObject` per file, so an incremental run makes no
-S3 requests until it has something to send.
+The Room `uploaded_media` table is the sole source of truth about what is in S3,
+because skipping is **local-only** — there is no `HeadObject` per file. That is the
+property most likely to be broken by a well-meaning change: adding verification would
+also forfeit the guarantee that an incremental run makes no S3 requests at all.
 
-Two consequences to keep in mind:
-
-- Clearing app data wipes the index, so everything re-uploads (overwriting identical
-  content — no duplicates, just bandwidth).
-- **Trap:** deleting objects out-of-band (`aws s3 rm ... --recursive`) leaves the
-  index claiming those files are backed up. App data must be cleared too, or the app
-  will report success for objects that no longer exist. Documented in the README.
+Consequently the index can go stale in two ways — cleared app data, or objects deleted
+out-of-band. Both are user-facing and covered in the README.
 
 ### Android platform
 
