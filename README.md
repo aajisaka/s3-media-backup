@@ -15,7 +15,7 @@ back or deletes them.
 ## Contents
 
 1. [How it works](#how-it-works)
-2. [What is on this machine already](#what-is-on-this-machine-already)
+2. [Prerequisites](#prerequisites)
 3. [Step 1 — AWS setup](#step-1--aws-setup)
 4. [Step 2 — Build](#step-2--build)
 5. [Step 3 — Install on your phone](#step-3--install-on-your-phone)
@@ -23,6 +23,8 @@ back or deletes them.
 7. [Object layout in S3](#object-layout-in-s3)
 8. [Security notes](#security-notes)
 9. [Troubleshooting](#troubleshooting)
+10. [Project layout](#project-layout)
+11. [License](#license)
 
 ---
 
@@ -53,6 +55,8 @@ back or deletes them.
 | Large movies | Multipart upload with per-part retry and an abort on failure. Parts are bounded so memory use never grows with file size |
 | Background limits | `CoroutineWorker` runs as a `dataSync` foreground service so Android 14+ does not kill an in-flight upload |
 | Retries | 3 attempts with exponential backoff on network errors, HTTP 5xx and throttling. The media stream is re-opened on every attempt so a retry never resends a half-read body |
+| Progress | Bytes are counted as the SDK reads them, coalesced to a few updates per second, and published on a `StateFlow` that both the notification and the UI observe |
+| Uploaded total | `SUM(sizeBytes)` over the Room index, so it survives restarts and still counts media types you have since disabled |
 
 ### What it does *not* do
 
@@ -63,26 +67,60 @@ back or deletes them.
 
 ---
 
-## What is on this machine already
+## Prerequisites
 
-Installed during setup:
-
-| Tool | Location |
+| Requirement | Why |
 | --- | --- |
-| JDK 17 (Zulu) | `/Library/Java/JavaVirtualMachines/zulu-17.jdk` |
-| Android SDK command-line tools | `/opt/homebrew/share/android-commandlinetools` |
-| Android SDK platform 35, build-tools 35.0.0, platform-tools | under the SDK root |
-| Gradle 8.11.1 wrapper | `./gradlew` in this project (no global Gradle needed) |
+| **JDK 17** | AGP 9.4 requires exactly 17. Other JDKs fail the build. |
+| **Android SDK command-line tools** | Provides `sdkmanager`, and `adb` via platform-tools |
+| **SDK platform 37.2** | androidx.core 1.19+ and Compose 1.11+ require compiling against API 37. **Canary channel only** — see below. |
+| **SDK platform 36** | `targetSdk` |
+| **Build-tools 36.0.0** | AGP 9.4 default |
+| **platform-tools** | `adb`, for installing the APK |
+| **Git** | To clone the repo |
+| **An Android 8.0 (API 26) or newer device** | `minSdk` is 26. An emulator works too. |
+| AWS CLI *(optional)* | Only for the commands in Step 1 |
 
-`local.properties` already points at the SDK. If you move the SDK, edit that file.
+The project's own toolchain is pinned by the wrapper and the build files, so there is
+nothing else to install:
 
-Set these before running any Gradle or `adb` command:
+| Component | Version | Pinned by |
+| --- | --- | --- |
+| Gradle | 9.6.1 | `gradle/wrapper/gradle-wrapper.properties` |
+| Android Gradle Plugin | 9.4.1 | `gradle/libs.versions.toml` |
+| Kotlin | 2.2.10 | AGP's built-in Kotlin (see `AGENTS.md`) |
+| compileSdk / targetSdk / minSdk | 37.2 / 36 / 26 | `app/build.gradle.kts` |
+
+### Install the SDK
 
 ```bash
-export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+# macOS
+brew install --cask android-commandlinetools
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/build-tools/35.0.0:$PATH"
+export JAVA_HOME=$(/usr/libexec/java_home -v 17)
+
+yes | sdkmanager --licenses
+sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+# API 37 ships only as minor-versioned platforms, and only on the canary channel.
+sdkmanager --channel=3 "platforms;android-37.2"
 ```
+
+On Linux or Windows only the SDK location differs — point `ANDROID_HOME` at wherever
+you unpacked it. `sdkmanager` lives in `cmdline-tools/latest/bin`.
+
+> Skipping `platforms;android-37.2` gives a confusing failure in
+> `:app:checkDebugAarMetadata` rather than an obvious "platform not installed".
+
+### Point the build at your SDK
+
+Create `local.properties` in the repo root. It is machine-specific and gitignored:
+
+```properties
+sdk.dir=/opt/homebrew/share/android-commandlinetools
+```
+
+Forgetting this is the most common first-build failure ("SDK location not found").
 
 ---
 
@@ -168,7 +206,7 @@ aws sso login
 ```
 
 If you instead want to reuse a CloudShell session's credentials locally, run this
-**in CloudShell** and copy the `export` lines it prints to your Mac:
+**in CloudShell** and copy the `export` lines it prints to your machine:
 
 ```bash
 python3 - <<'PYEOF'
@@ -229,19 +267,20 @@ Two APKs are produced:
 
 | File | Notes |
 | --- | --- |
-| `app/build/outputs/apk/release/app-release.apk` | 12 MB — use this one on your phone |
-| `app/build/outputs/apk/debug/app-debug.apk` | 18 MB, with debug tooling |
+| `app/build/outputs/apk/release/app-release.apk` | ~14 MB — use this one on your phone |
+| `app/build/outputs/apk/debug/app-debug.apk` | ~20 MB, with debug tooling |
 
-Both are signed with this machine's debug key, so they install directly. Because
-that key lives in `~/.android/debug.keystore`, you can push updated builds over the
-top without uninstalling.
+Both are signed with your machine's debug key, so they install directly. Because that
+key lives in `~/.android/debug.keystore`, you can push updated builds over the top
+without uninstalling.
 
 Useful targets:
 
 ```bash
-./gradlew assembleDebug     # debug only
-./gradlew assembleRelease   # release only
-./gradlew lint              # static checks
+./gradlew :app:testDebugUnitTest   # unit tests
+./gradlew assembleDebug            # debug APK only
+./gradlew assembleRelease          # release APK only
+./gradlew :app:lint                # static checks (abortOnError is on)
 ./gradlew clean
 ```
 
@@ -267,11 +306,16 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 `adb devices` must list your device as `device`. If it says `unauthorized`, tap
 "Allow" on the phone.
 
+> **Samsung (One UI) specifics.** Build number is under
+> **About phone → Software information**, not directly in About phone. If
+> `adb install` fails with `INSTALL_FAILED_BLOCKED`, turn off
+> **Settings → Security and privacy → Auto Blocker**.
+
 ### Option B — Wireless debugging (Android 11+)
 
 1. **Settings → System → Developer options → Wireless debugging** → on.
 2. Tap **Pair device with pairing code** and note the IP:port and the code.
-3. On the Mac:
+3. On your computer:
 
 ```bash
 adb pair   IP_FROM_PAIRING_DIALOG:PORT
@@ -307,6 +351,12 @@ grant it once and install.
    only"; the app backs up whatever it can see.
 5. Tap **Back up now**.
 
+The status card then reports how many items are backed up per media type, how many are
+still pending, and the cumulative size uploaded.
+
+To automate it, turn on **Automatic backup** in settings and pick an interval. The job
+runs only on Wi-Fi (and optionally only while charging) by default.
+
 ### Backing up only videos
 
 Photos and videos can be enabled independently under **Settings → What to back up**.
@@ -327,9 +377,6 @@ reports counts for videos only.
 > (**Settings → Apps → S3 Media Backup → Storage → Clear data**) before re-enabling
 > that media type. Otherwise the local index will report those files as "already
 > backed up" and skip them, leaving them missing from S3.
-
-To automate it, turn on **Automatic backup** in settings and pick an interval.
-The job runs only on Wi-Fi (and optionally only while charging) by default.
 
 ---
 
@@ -367,7 +414,7 @@ just because a same-named file is added later. Collisions are resolved across th
 
 This is covered by unit tests in
 [`app/src/test/java/com/example/mediabackup/data/S3KeyResolutionTest.kt`](app/src/test/java/com/example/mediabackup/data/S3KeyResolutionTest.kt)
-— run them with `./gradlew :app:test`.
+— run them with `./gradlew :app:testDebugUnitTest`.
 
 ### What gets skipped
 
@@ -425,6 +472,11 @@ requests at all until it has something to upload.
 
    Then add a `signingConfigs.release` block in `app/build.gradle.kts`.
 
+6. **Dependency alerts are mostly build-time.** Dependabot reports against the Gradle
+   plugin classpath as well as the app. Those packages run on your build machine and
+   never ship in the APK. To tell the two apart, resolve both classpaths and scan them
+   — see the CVE section in [`AGENTS.md`](AGENTS.md).
+
 ---
 
 ## Troubleshooting
@@ -434,6 +486,9 @@ requests at all until it has something to upload.
 | `adb devices` is empty | Try a different cable (many are charge-only), or re-select **File transfer** on the phone |
 | `unauthorized` in `adb devices` | Accept the debugging prompt on the phone; if none appears, revoke USB debugging authorisations and replug |
 | `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | Uninstall the existing app first: `adb uninstall com.example.mediabackup` |
+| `INSTALL_FAILED_BLOCKED` (Samsung) | Turn off **Settings → Security and privacy → Auto Blocker** |
+| `SDK location not found` | Create `local.properties` with `sdk.dir=...` |
+| `checkDebugAarMetadata` fails asking for API 37 | Install `platforms;android-37.2` from the canary channel |
 | Backup fails with `NotAuthorizedException` | Identity Pool ID is wrong, is in a different region, or guest access is disabled |
 | `AccessDenied` on upload | Bucket name or region mismatch, or the IAM policy prefix does not match the app's key prefix |
 | `Unknown AWS region` | Region must look like `ap-northeast-1` — lowercase, hyphenated, ending in a number |
@@ -463,15 +518,20 @@ app/src/main/java/com/example/mediabackup/
 │   ├── Permissions.kt        Per-Android-version permission handling
 │   ├── ProgressInputStream.kt  Byte counter for upload progress
 │   ├── S3Uploader.kt         Cognito + S3: streaming PUT / multipart
-│   └── SettingsRepository.kt SharedPreferences-backed settings
+│   └── SettingsRepository.kt Settings + S3 key assignment
 ├── ui/
 │   ├── BackupViewModel.kt
+│   ├── Formatting.kt         Byte and date formatting (pure Kotlin, unit tested)
 │   ├── HomeScreen.kt         Status, progress, "Back up now"
 │   ├── SettingsScreen.kt     AWS + schedule configuration
 │   └── theme/Theme.kt        Material 3, dynamic colour on Android 12+
 └── work/
     ├── BackupWorker.kt       Foreground CoroutineWorker
     └── BackupScheduler.kt    WorkManager registration
+
+app/src/test/java/com/example/mediabackup/    JVM unit tests
+aws/cognito-identity-pool.yaml                CloudFormation template
+AGENTS.md                                     Notes for AI agents working on this repo
 ```
 
 ---
