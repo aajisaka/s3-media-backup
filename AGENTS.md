@@ -43,7 +43,7 @@ placeholders in docs.
 ## Commands
 
 ```bash
-./gradlew :app:testDebugUnitTest        # 27 unit tests, ~5s
+./gradlew :app:testDebugUnitTest        # 35 unit tests, ~5s
 ./gradlew assemble                      # debug + release APKs
 ./gradlew :app:lint                     # static analysis (abortOnError = true)
 ./gradlew clean
@@ -83,11 +83,12 @@ confirm a UI change — it caught two bugs that compiled and linted cleanly.
 MediaScanner ──► BackupRepository ──► S3Uploader ──► S3
  (MediaStore)     (diff vs Room index)  (streaming PUT / multipart)
                         │
-                        ▼
-              BackupRepository.status : StateFlow<BackupStatus>
+                        ├──► BackupRepository.status  : StateFlow<BackupStatus>
+                        │         ├──► BackupWorker  (notification, via collection)
+                        │         └──► HomeScreen    (Compose, via collectAsStateWithLifecycle)
                         │
-                        ├──► BackupWorker  (notification, via collection)
-                        └──► HomeScreen    (Compose, via collectAsStateWithLifecycle)
+                        └──► BackupRepository.library : StateFlow<List<LibraryEntry>>
+                                  └──► LibraryScreen (grid; tap hands off to the system player)
 ```
 
 - `BackupApp` holds two singletons: `SettingsRepository` and `BackupRepository`.
@@ -96,6 +97,17 @@ MediaScanner ──► BackupRepository ──► S3Uploader ──► S3
   callback plumbing — the worker *collects* the flow to update its notification. If
   you add progress that needs to reach the UI, publish it on that StateFlow.
 - `MediaItem` is the unit of work; everything downstream is per-file.
+- The **library** is the one thing that is not progress. It gets its own flow because it
+  changes on a different schedule and is only collected while that screen is open, and
+  because putting a `List<LibraryEntry>` on `status` would make every progress tick
+  compare it.
+- **One scan feeds both flows.** `refreshFromDevice()` (formerly `refreshCounts()`) reads
+  MediaStore and the index once and publishes the counts *and* the library. It is called
+  on resume rather than polled; `runBackup()` refreshes the library at the end of a run
+  from the scan it already holds, so badges go honest the moment an upload finishes.
+- **`BackHandler` is required on every screen other than the home one.** Navigation is a
+  plain `Screen` enum in `MainActivity`, which system back knows nothing about — without
+  it, back exits the app from Library or Settings instead of stepping home.
 
 ---
 
@@ -293,6 +305,30 @@ also forfeit the guarantee that an incremental run makes no S3 requests at all.
 Consequently the index can go stale in two ways — cleared app data, or objects deleted
 out-of-band. Both are user-facing and covered in the README.
 
+### Library
+
+- **The grid lists the device, not the bucket.** A tile needs a local file to draw a
+  thumbnail and to play, so a file uploaded and then deleted from the phone is in S3 but
+  absent from the grid, while still counting towards the status card's uploaded total.
+  That asymmetry is deliberate and documented — resolving it would mean listing the
+  bucket, which the IAM role deliberately cannot do (`s3:ListBucket` is not granted).
+- **`isUploaded()` in `MediaItem.kt` is the single definition of "in S3"**, and both the
+  backup diff and the tile badge call it. It compares `fingerprint`, not the id: MediaStore
+  reuses rows, so a file edited in place keeps its id and must show as pending again. If
+  you find yourself writing `known[id] == fingerprint` anywhere else, call this instead —
+  the two answers are visible side by side in the UI, so a disagreement is a bug report.
+- **Thumbnails are hand-rolled, not Coil.** `ContentResolver.loadThumbnail` is one call and
+  the only thing a library needs is a byte-bounded LRU, so the alternative was a new
+  dependency (and its CVE surface) for caching alone. `Thumbnails.kt` bounds the cache by
+  `Bitmap.byteCount` rather than entry count, because thumbnail size follows the source
+  aspect ratio. `loadThumbnail` is API 29+; older devices get a placeholder rather than the
+  deprecated `MediaStore.Video.Thumbnails` API.
+- **Playback is an `ACTION_VIEW` handoff** to the system player (`Playback.kt`), which is
+  why the app has no media3 dependency and no player screen to maintain. Adding an in-app
+  player means adding ExoPlayer and its codec surface — a much bigger change than it looks.
+- Ordering is newest-first by `takenAtMillis`, and the tile's list key is the fingerprint
+  (not the id) so a tile keeps its identity across the reordering a backup causes.
+
 ### Android platform
 
 - `tools:node="merge"` on the `SystemForegroundService` entry — **not `"merged"`**.
@@ -313,8 +349,9 @@ top-level functions rather than left inside classes that need Android types:
 
 - `resolveKeys()` — `data/SettingsRepository.kt`
 - `mediaPermissionsFor()` — `data/Permissions.kt`
-- `formatBytes()` / `formatWhen()` — `ui/Formatting.kt` (kept out of the Compose files
-  for the same reason, even though they touch no Android API at all)
+- `isUploaded()` — `data/MediaItem.kt`
+- `formatBytes()` / `formatWhen()` / `librarySummary()` — `ui/Formatting.kt` (kept out of
+  the Compose files for the same reason, even though they touch no Android API at all)
 
 `Build.VERSION.SDK_INT` is also pinned to `0` in JVM tests, so any version branching
 must take the API level as a **parameter** to be testable.

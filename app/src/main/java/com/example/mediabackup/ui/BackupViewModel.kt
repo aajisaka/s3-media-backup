@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.mediabackup.BackupApp
 import com.example.mediabackup.data.BackupSettings
 import com.example.mediabackup.data.BackupStatus
+import com.example.mediabackup.data.LibraryEntry
 import com.example.mediabackup.work.BackupScheduler
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -20,6 +21,7 @@ class BackupViewModel(private val app: BackupApp) : ViewModel() {
 
     val settings: StateFlow<BackupSettings> = app.settingsRepository.settings
     val status: StateFlow<BackupStatus> = app.repository.status
+    val library: StateFlow<List<LibraryEntry>> = app.repository.library
 
     fun updateSettings(transform: (BackupSettings) -> BackupSettings) {
         app.settingsRepository.update(transform)
@@ -31,8 +33,8 @@ class BackupViewModel(private val app: BackupApp) : ViewModel() {
         BackupScheduler.runNow(app)
     }
 
-    fun refreshCounts() {
-        viewModelScope.launch { app.repository.refreshCounts() }
+    fun refreshFromDevice() {
+        viewModelScope.launch { app.repository.refreshFromDevice() }
     }
 
     companion object {

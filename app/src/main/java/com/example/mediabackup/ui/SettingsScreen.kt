@@ -1,5 +1,6 @@
 package com.example.mediabackup.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -62,6 +63,10 @@ fun SettingsScreen(
     val regionError = region.isNotBlank() && !REGION_REGEX.matches(region.trim())
     val intervalValid = intervalHours.toIntOrNull()?.let { it in 1..8760 } ?: false
     val canSave = region.trim().isNotBlank() && !regionError && intervalValid
+
+    // Same reason as the library: the system back button should step back to the home
+    // screen, not drop out of the app.
+    BackHandler(onBack = onBack)
 
     Scaffold(
         topBar = {

@@ -41,3 +41,22 @@ private val dateFormat: java.text.DateFormat =
     )
 
 internal fun formatWhen(millis: Long): String = dateFormat.format(Date(millis))
+
+/**
+ * One-line description of the library: what it holds, and how much of that is in S3.
+ *
+ * Both media types are named only when both are present, so a videos-only library does
+ * not read "188 videos, 0 photos". The uploaded count is separate from the total because
+ * the library deliberately shows pending files too.
+ */
+internal fun librarySummary(videos: Int, photos: Int, uploaded: Int): String {
+    val counts = when {
+        videos > 0 && photos > 0 -> "${mediaCount(videos, "video")}, ${mediaCount(photos, "photo")}"
+        photos > 0 -> mediaCount(photos, "photo")
+        else -> mediaCount(videos, "video")
+    }
+    return "$counts · $uploaded uploaded"
+}
+
+private fun mediaCount(count: Int, noun: String): String =
+    if (count == 1) "1 $noun" else "$count ${noun}s"

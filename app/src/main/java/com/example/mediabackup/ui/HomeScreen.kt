@@ -19,12 +19,12 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Movie
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -52,6 +52,7 @@ fun HomeScreen(
     notificationPermissionGranted: Boolean,
     onRequestPermissions: () -> Unit,
     onBackupNow: () -> Unit,
+    onOpenLibrary: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Scaffold(
@@ -76,7 +77,7 @@ fun HomeScreen(
         ) {
             if (!settings.isConfigured) {
                 ActionCard(
-                    icon = { Icon(Icons.Outlined.CloudUpload, null) },
+                    icon = Icons.Outlined.CloudUpload,
                     title = "Connect your S3 bucket",
                     body = "Add your AWS region, Cognito Identity Pool ID and bucket name to start backing up.",
                     actionLabel = "Open settings",
@@ -86,7 +87,7 @@ fun HomeScreen(
 
             if (!mediaPermissionGranted) {
                 ActionCard(
-                    icon = { Icon(Icons.Outlined.Folder, null) },
+                    icon = Icons.Outlined.Folder,
                     title = "Media access needed",
                     body = "Grant access to photos and videos so they can be uploaded.",
                     actionLabel = "Grant access",
@@ -94,7 +95,7 @@ fun HomeScreen(
                 )
             } else if (!notificationPermissionGranted) {
                 ActionCard(
-                    icon = { Icon(Icons.Outlined.ErrorOutline, null) },
+                    icon = Icons.Outlined.ErrorOutline,
                     title = "Progress notifications are off",
                     body = "Long backups run in the background. Allow notifications to see progress.",
                     actionLabel = "Allow notifications",
@@ -123,6 +124,20 @@ fun HomeScreen(
                         else -> "Back up now"
                     },
                 )
+            }
+
+            // Independent of S3 settings: the library plays device files, so it is useful
+            // before anything has been configured.
+            OutlinedButton(
+                onClick = onOpenLibrary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                enabled = mediaPermissionGranted,
+            ) {
+                Icon(Icons.Outlined.PhotoLibrary, null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Browse library")
             }
 
             if (status.lastErrors.isNotEmpty()) {
@@ -239,27 +254,6 @@ private fun HorizontalThinRule() {
     androidx.compose.material3.HorizontalDivider(
         color = MaterialTheme.colorScheme.outlineVariant,
     )
-}
-
-@Composable
-private fun ActionCard(
-    icon: @Composable () -> Unit,
-    title: String,
-    body: String,
-    actionLabel: String,
-    onAction: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                icon()
-                Spacer(Modifier.width(8.dp))
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            }
-            Text(body, style = MaterialTheme.typography.bodyMedium)
-            FilledTonalButton(onClick = onAction) { Text(actionLabel) }
-        }
-    }
 }
 
 @Composable

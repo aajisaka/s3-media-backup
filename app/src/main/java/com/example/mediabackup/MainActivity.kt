@@ -22,10 +22,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.mediabackup.data.Permissions
 import com.example.mediabackup.ui.BackupViewModel
 import com.example.mediabackup.ui.HomeScreen
+import com.example.mediabackup.ui.LibraryScreen
 import com.example.mediabackup.ui.SettingsScreen
 import com.example.mediabackup.ui.theme.MediaBackupTheme
 
-private enum class Screen { HOME, SETTINGS }
+private enum class Screen { HOME, SETTINGS, LIBRARY }
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +49,7 @@ private fun BackupRoot() {
 
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val status by viewModel.status.collectAsStateWithLifecycle()
+    val library by viewModel.library.collectAsStateWithLifecycle()
 
     // Bumped whenever permission state may have changed (user granted something, or
     // they changed which media types to back up, which changes what we must hold).
@@ -71,7 +73,9 @@ private fun BackupRoot() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 permissionRevision++
-                viewModel.refreshCounts()
+                // Also refreshes the library, so returning from the system player lands
+                // on badges that match whatever happened while we were away.
+                viewModel.refreshFromDevice()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -93,6 +97,7 @@ private fun BackupRoot() {
                 )
             },
             onBackupNow = viewModel::backupNow,
+            onOpenLibrary = { screen = Screen.LIBRARY },
             onOpenSettings = { screen = Screen.SETTINGS },
         )
 
@@ -101,6 +106,16 @@ private fun BackupRoot() {
             onSave = {
                 viewModel.updateSettings { _ -> it }
                 screen = Screen.HOME
+            },
+            onBack = { screen = Screen.HOME },
+        )
+
+        Screen.LIBRARY -> LibraryScreen(
+            entries = library,
+            mediaPermissionGranted = mediaGranted,
+            // Media permissions only: the library has nothing to say about notifications.
+            onRequestPermissions = {
+                permissionLauncher.launch(Permissions.requiredPermissions(settings))
             },
             onBack = { screen = Screen.HOME },
         )

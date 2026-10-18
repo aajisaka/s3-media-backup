@@ -61,6 +61,19 @@ data class BackupResult(
 }
 
 /**
+ * One row of the library: a file on the device, plus whether the index says a
+ * byte-identical copy of it is already in S3.
+ *
+ * Only files that still exist locally appear, because the library plays them from the
+ * device. An object that was uploaded and then deleted locally is in S3 but has nothing
+ * left to play, so it is deliberately absent. See README.
+ */
+data class LibraryEntry(
+    val item: MediaItem,
+    val uploaded: Boolean,
+)
+
+/**
  * Owns a backup run: scan MediaStore, diff against the local index, upload new or
  * changed files, and publish progress through [status] so the notification and the
  * home screen stay in sync without any callback plumbing.
@@ -75,6 +88,15 @@ class BackupRepository(
 
     private val _status = MutableStateFlow(BackupStatus())
     val status: StateFlow<BackupStatus> = _status.asStateFlow()
+
+    private val _library = MutableStateFlow<List<LibraryEntry>>(emptyList())
+
+    /**
+     * Everything MediaStore holds that the current settings put in scope, newest first.
+     * Separate from [status] because it is a browsing surface rather than progress: it
+     * changes on its own schedule and is only collected while the library is on screen.
+     */
+    val library: StateFlow<List<LibraryEntry>> = _library.asStateFlow()
 
     private var lastProgressAt = 0L
 
@@ -117,12 +139,12 @@ class BackupRepository(
         val all = withContext(Dispatchers.IO) {
             MediaScanner.scan(appContext, settings.backupImages, settings.backupVideos)
         }
-        val pending = all.filter { known[it.id] != it.fingerprint }
+        val pending = all.filterNot { isUploaded(it.id, it.fingerprint, known) }
         val totalBytes = pending.sumOf { it.sizeBytes }
         val skipped = all.size - pending.size
         // Counts are tracked per media type so the home screen can label them honestly.
-        val photosBackedUp = all.count { !it.isVideo && known[it.id] == it.fingerprint }
-        val videosBackedUp = all.count { it.isVideo && known[it.id] == it.fingerprint }
+        val photosBackedUp = all.count { !it.isVideo && isUploaded(it.id, it.fingerprint, known) }
+        val videosBackedUp = all.count { it.isVideo && isUploaded(it.id, it.fingerprint, known) }
         val backedUpBytesAtStart = withContext(Dispatchers.IO) { dao.totalUploadedBytes() } ?: 0L
         // Resolved over the whole scan so a new file can never land on the key of one
         // that is already backed up.
@@ -246,16 +268,33 @@ class BackupRepository(
                 backedUpBytes = backedUpBytesAtStart + uploadedBytes,
             )
         }
+        // Rebuild the library from the scan already in memory so the badges are honest
+        // the moment a run ends, not at the next resume. Only the index needs re-reading;
+        // MediaStore itself did not change while we were uploading.
+        val knownAfterRun = withContext(Dispatchers.IO) {
+            dao.allFingerprints().associate { it.mediaStoreId to it.fingerprint }
+        }
+        _library.value = libraryItems(all, knownAfterRun)
+
         return result
     }
 
-    /** Recomputes the pending and per-media-type backed-up counts without uploading. */
-    suspend fun refreshCounts() {
+    /**
+     * Re-reads MediaStore and the index, then publishes the counts and the library from
+     * that one scan.
+     *
+     * A scan is the expensive half and both answers are derived from the same two
+     * inputs, so they share it rather than scanning twice for a screen that may not even
+     * be open. Called on resume; nothing here is polled.
+     */
+    suspend fun refreshFromDevice() {
         val settings = settingsRepository.current()
         if (!Permissions.hasMediaAccess(appContext, settings)) {
             _status.update {
                 it.copy(pendingCount = 0, photosBackedUp = 0, videosBackedUp = 0)
             }
+            // Nothing can be read, so offering anything as browsable would be a lie.
+            _library.value = emptyList()
             return
         }
         val known = withContext(Dispatchers.IO) {
@@ -270,12 +309,12 @@ class BackupRepository(
         val backedUpBytes = withContext(Dispatchers.IO) { dao.totalUploadedBytes() } ?: 0L
         _status.update {
             it.copy(
-                pendingCount = all.count { item -> known[item.id] != item.fingerprint },
+                pendingCount = all.count { item -> !isUploaded(item.id, item.fingerprint, known) },
                 photosBackedUp = all.count { item ->
-                    !item.isVideo && known[item.id] == item.fingerprint
+                    !item.isVideo && isUploaded(item.id, item.fingerprint, known)
                 },
                 videosBackedUp = all.count { item ->
-                    item.isVideo && known[item.id] == item.fingerprint
+                    item.isVideo && isUploaded(item.id, item.fingerprint, known)
                 },
                 backedUpBytes = backedUpBytes,
                 // Keep the most recent of the in-session run and the newest upload in
@@ -284,7 +323,16 @@ class BackupRepository(
                 lastRunAtMillis = maxOf(it.lastRunAtMillis, latestUpload),
             )
         }
+        _library.value = libraryItems(all, known)
     }
+
+    /**
+     * Newest first: the library exists to find something to watch, and the most recent
+     * additions are what you are looking for.
+     */
+    private fun libraryItems(all: List<MediaItem>, known: Map<Long, String>): List<LibraryEntry> =
+        all.map { LibraryEntry(it, isUploaded(it.id, it.fingerprint, known)) }
+            .sortedByDescending { it.item.takenAtMillis }
 
     /**
      * Coalesces the byte-level callbacks from the SDK so the UI and the notification

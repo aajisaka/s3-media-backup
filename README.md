@@ -9,6 +9,8 @@ back or deletes them.
 - **WorkManager** for "back up now" and for a repeating background schedule
 - Uploads stream straight from `ContentResolver` to S3 — **no temp copies**, so a
   20 GB movie does not need 20 GB of free space
+- A **library view** with thumbnails, showing what is already in S3, and starting a
+  movie in your phone's own player when you tap it
 
 ---
 
@@ -20,11 +22,12 @@ back or deletes them.
 4. [Step 2 — Build](#step-2--build)
 5. [Step 3 — Install on your phone](#step-3--install-on-your-phone)
 6. [Step 4 — Configure and run](#step-4--configure-and-run)
-7. [Object layout in S3](#object-layout-in-s3)
-8. [Security notes](#security-notes)
-9. [Troubleshooting](#troubleshooting)
-10. [Project layout](#project-layout)
-11. [License](#license)
+7. [Browsing what's backed up](#browsing-whats-backed-up)
+8. [Object layout in S3](#object-layout-in-s3)
+9. [Security notes](#security-notes)
+10. [Troubleshooting](#troubleshooting)
+11. [Project layout](#project-layout)
+12. [License](#license)
 
 ---
 
@@ -64,6 +67,9 @@ back or deletes them.
 - It does not restore media to the device.
 - It does not de-duplicate identical photos with different MediaStore ids.
 - Background runs are best-effort: Android Doze can delay a periodic job.
+- The library lists files on the device, not objects in the bucket, so media deleted
+  from the phone after uploading disappears from the grid (see
+  [Browsing what's backed up](#browsing-whats-backed-up)).
 
 ---
 
@@ -352,7 +358,9 @@ grant it once and install.
 5. Tap **Back up now**.
 
 The status card then reports how many items are backed up per media type, how many are
-still pending, and the cumulative size uploaded.
+still pending, and the cumulative size uploaded. **Browse library** shows the same
+information per file, as a thumbnail grid — see
+[Browsing what's backed up](#browsing-whats-backed-up).
 
 To automate it, turn on **Automatic backup** in settings and pick an interval. The job
 runs only on Wi-Fi (and optionally only while charging) by default.
@@ -377,6 +385,43 @@ reports counts for videos only.
 > (**Settings → Apps → S3 Media Backup → Storage → Clear data**) before re-enabling
 > that media type. Otherwise the local index will report those files as "already
 > backed up" and skip them, leaving them missing from S3.
+
+---
+
+## Browsing what's backed up
+
+**Browse library** on the home screen opens a grid of everything in scope, newest
+first, with each tile marked for whether it is already in S3:
+
+| Tile badge | Meaning |
+| --- | --- |
+| Filled blue check | This exact file is in S3 |
+| Outlined cloud | Still waiting to be uploaded |
+
+The line above the grid summarises the same thing, for example
+`187 videos · 187 uploaded`. Pending and uploaded tiles sit side by side on purpose, so
+the grid doubles as "what is missing?" without a second screen.
+
+Tapping a tile hands the file to whatever your phone opens it with — the system video
+player for a movie. The app ships no video decoder: seeking, subtitles, audio focus and
+hardware decoding all stay the player's problem.
+
+> **The grid is built from the device, not from the bucket.** A tile needs a local file
+> to show a frame and to play, so a movie that is in S3 but has been deleted from the
+> phone **does not appear** — even though the uploaded total on the status card still
+> counts it. To see what is actually in the bucket:
+>
+> ```bash
+> aws s3 ls s3://YOUR_BUCKET_NAME/media/videos/ --recursive | head
+> ```
+
+The grid follows **Settings → What to back up**, so with photos off it lists videos only.
+A tile is only marked uploaded when the file's size and timestamp still match the ones
+recorded at upload time, which is the same test the backup itself uses — a movie edited
+in place shows as pending again rather than silently looking backed up.
+
+Thumbnails are decoded with `ContentResolver.loadThumbnail`, which needs Android 10
+(API 29) or newer. Older devices get a placeholder icon instead of a frame.
 
 ---
 
@@ -495,6 +540,8 @@ requests at all until it has something to upload.
 | Backups stop in the background | Android battery optimisation. Long-press the app → **App info → Battery → Unrestricted** |
 | A large video never finishes | Files above roughly 1 TB (9,000 × 128 MB parts) are rejected by design. Check `adb logcat -s BackupWorker` |
 | Everything uploads twice after an app reinstall | The local Room index is cleared on uninstall. Objects are overwritten with identical content; nothing is corrupted |
+| A movie you know is uploaded is missing from the library | It was deleted from the phone after uploading. The grid lists device files, not bucket objects — check with `aws s3 ls s3://BUCKET/media/videos/ --recursive` |
+| Library tiles show an icon instead of a frame | Android 9 or older. `loadThumbnail` is API 29+; the tiles still play normally |
 
 Capture live logs while a backup runs:
 
@@ -512,18 +559,22 @@ app/src/main/java/com/example/mediabackup/
 ├── MainActivity.kt           Compose entry point, permissions, navigation
 ├── data/
 │   ├── BackupDatabase.kt     Room index of already-uploaded media
-│   ├── BackupRepository.kt   Scan → diff → upload → report progress
-│   ├── MediaItem.kt          One photo or video
+│   ├── BackupRepository.kt   Scan → diff → upload → report progress; owns the library
+│   ├── MediaItem.kt          One photo or video, and the "is it in S3?" rule
 │   ├── MediaScanner.kt       MediaStore queries (scoped-storage safe)
 │   ├── Permissions.kt        Per-Android-version permission handling
 │   ├── ProgressInputStream.kt  Byte counter for upload progress
 │   ├── S3Uploader.kt         Cognito + S3: streaming PUT / multipart
 │   └── SettingsRepository.kt Settings + S3 key assignment
 ├── ui/
+│   ├── ActionCard.kt         Shared "something needs doing" card
 │   ├── BackupViewModel.kt
-│   ├── Formatting.kt         Byte and date formatting (pure Kotlin, unit tested)
-│   ├── HomeScreen.kt         Status, progress, "Back up now"
+│   ├── Formatting.kt         Byte, date and summary formatting (pure Kotlin, unit tested)
+│   ├── HomeScreen.kt         Status, progress, "Back up now", "Browse library"
+│   ├── LibraryScreen.kt      Thumbnail grid; tap a tile to play it
+│   ├── Playback.kt           Hands a file to the system player
 │   ├── SettingsScreen.kt     AWS + schedule configuration
+│   ├── Thumbnails.kt         Thumbnail decoding + byte-bounded LRU cache
 │   └── theme/Theme.kt        Material 3, dynamic colour on Android 12+
 └── work/
     ├── BackupWorker.kt       Foreground CoroutineWorker
